@@ -284,7 +284,7 @@ def extract_slates_names(driver):
         print('Error locating slates div.')
 
     try:
-        names = [name.text.strip(' \n').split(' ')[0] for name in slates_div\
+        names = [name.text.strip(' \n').split(' (')[0] for name in slates_div\
             .find_elements_by_xpath('./parent::div//following-sibling::a')]
     except Exception as e:
         print('Error extracting slates names: \n{}'.format(e))
