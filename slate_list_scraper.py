@@ -1,42 +1,89 @@
 import argparse
+import datetime
 import time
 import glob
+import pickle
 from collections import OrderedDict
 from scraping_common import *
 from selenium.webdriver.common.action_chains import ActionChains
 
 
-def extract_slate_sport(driver, sport):
+def get_scrape_url(sport):
+    scrape_urls = {'MLB':'https://www.fantasyalarm.com/mlb/projections',
+        'NFL':'https://www.fantasyalarm.com/nfl/projections',
+        'NBA':'https://www.fantasyalarm.com/nba/projections',
+        'PGA':'https://www.fantasyalarm.com/pga/projections'}
+    return scrape_urls[sport]
+
+
+def extract_slate_sport(driver, sport, source):
     """Selects the function specified for sport.
     """
-    sports_functions = {
-        'https://www.fantasyalarm.com/mlb/projections':globals()['extract_slate_MLB'],
-        # 'https://www.fantasyalarm.com/nfl/projections':globals()['extract_slate_NFL'],
-        'https://www.fantasyalarm.com/nba/projections':globals()['extract_slate_NBA'],
-        # 'https://www.fantasyalarm.com/nhl/projections':'',
-        'https://www.fantasyalarm.com/pga/projections':globals()['extract_slate_PGA']
+    scrape_functions = {
+        'MLB':globals()['extract_slate_MLB'],
+        'NFL':globals()['extract_slate_NFL'],
+        'NBA':globals()['extract_slate_NBA'],
+        'PGA':globals()['extract_slate_PGA']
     }
+
+    # Testing
+    res = ''
+    data = ''
+    if sport == 'PGA':
+        res = scrape_functions[sport](driver, source)
+        data = create_data_for_database(res, sport)
+    else:
+        res = scrape_functions[sport](driver, source)
+        data = create_data_for_database(res, sport)
     pass
-    data_1 = sports_functions[sport](driver, 'DraftKings', sport)
-    data_2 = sports_functions[sport](driver, 'FanDuel', sport)
-
-    data = create_data_for_database(data_1, data_2)
 
 
-def create_data_for_database(data1, data2):
+def check_cookies_exists(filename):
+    """Check if a cookies.pkl file is already on folder.
+    Returns True if so.
+    """
+    os.chdir(os.path.dirname(os.path.realpath(__file__)))
+    if os.path.isfile(filename):
+        return True
+    return False
+
+
+def load_cookies(driver, filename):
+    """Loads cookies from file and adds it to WebDriver.
+    """
+    cookies = pickle.load(open(filename, 'rb'))
+    for cookie in cookies:
+        driver.add_cookie(cookie)
+    print('Cookies Loaded.')
+
+def save_cookies(driver, filename):
+    """Saves the webdriver cookies to a file.
+    """
+    pickle.dump(driver.get_cookies(), open(filename, 'wb'))
+    print('Cookies Saved.')
+
+
+def create_data_for_database(data, sport):
     """Create the format to save on database.
     """
-    pass
+    DB_data = dict()
+
+    DB_data['sports_type'] = sport
+    #DB_data['slate_title'] = slate_title
+    DB_data['time'] = datetime.datetime.now()
+    DB_data['projection_data'] = data
+
+    return DB_data
 
 
-def make_login_fantasy_sports(driver, sport):
+def login_fantasy_alarm(driver, sport):
     """Makes login to fantasy sports.
     """
     email = 'johnscotthayse@gmail.com'
     passwd = 'fantasyfun2019'
-    
+
     wait = WebDriverWait(driver, 10)
-    driver.get(sport)
+    driver.get(get_scrape_url(sport))
 
     try:
         skip_button = driver.find_element_by_xpath(
@@ -52,8 +99,6 @@ def make_login_fantasy_sports(driver, sport):
             EC.presence_of_element_located((By.XPATH,
             '//a[contains(@class, " dropdown-toggle")]'))
         )
-        # login_dropdown_button = driver.find_element_by_xpath(
-        #     '//a[contains(@class, " dropdown-toggle")]')
         ActionChains(driver).move_to_element(login_dropdown_button)\
             .click().perform()
         time.sleep(0.5)
@@ -87,171 +132,128 @@ def make_login_fantasy_sports(driver, sport):
     except NoSuchElementException:
         print('Error login.')
     print('Logged in.')
-        
 
-def extract_slate_NBA(driver, score):
+
+def open_fantasy_alarm(driver, sport):
+    """Makes login into fantasyalarm.com if a cookie file doesn't exist on
+    the same folder.
+    """
+    cookie_existing = check_cookies_exists('driver_cookies.pkl')
+
+    if(cookie_existing):
+        driver.get(get_scrape_url(sport))
+        load_cookies(driver, 'driver_cookies.pkl')
+    else:
+        login_fantasy_alarm(driver, args['sport'])
+        save_cookies(driver, 'driver_cookies.pkl')
+
+
+def extract_slate_NFL(driver, source, slate):
     """Extracts the slates list from sport.
     """
     wait = WebDriverWait(driver, 10)
+    actions = ActionChains(driver)
 
-    try:
-        skip_button = driver.find_element_by_xpath(
-            '//a[contains(@class, "introjs-button introjs-skipbutton")]')
-        ActionChains(driver).move_to_element(skip_button).click().perform()
-        time.sleep(0.5)
-        print('Clicked')
-    except NoSuchElementException:
-        print("Error skip button.")
-
-    try:
-        projections_button = wait.until(
-            EC.presence_of_element_located((By.ID, 
-            "mobile-click-i-class-fa-fa-line-chart-aria-hidden-true-i-projections"))
-        )
-        ActionChains(driver).move_to_element(projections_button).click().perform()
-        time.sleep(2)
-    except NoSuchElementException:
-        print("Error clicking at projections.")
-
-    slate_list = driver.find_element_by_xpath('//div[contains(text(), "Slates")]')
-    slates = dict()
-
-    for slate in slate_list.find_elements_by_xpath(
-        './/parent::div//following-sibling::a'):
-        ActionChains(driver).move_to_element(slate).click().perform()
-        time.sleep(3)
+    if source == 'FanDuel':
+        driver.get('https://www.fantasyalarm.com/nfl/projections/daily'\
+            '/hitters/FD/{}'.format(slate))
+    if source == 'DraftKings':
+        driver.get('https://www.fantasyalarm.com/nfl/projections/daily'\
+            '/hitters/DK/{}'.format(slate))
     
-        # Clicks the score and download the file
-        slate_button = wait.until(
-            EC.presence_of_element_located((By.XPATH,
-            '//a[contains(text(), "{}")]'.format(score)))
+    try:
+        csv_button = wait.until(
+            EC.presence_of_element_located((By.XPATH, 
+            "//span[contains(text(), 'CSV')]/parent::a"))
         )
-        ActionChains(driver).move_to_element(slate_button).click().perform()
-        time.sleep(1)
+        actions.move_to_element(csv_button).click().perform()
+        time.sleep(3)
+    except NoSuchElementException:
+        print('Download button not found.')
+    except Exception as e:
+        print('Not downloaded due to:\n{}'.format(e))
+        
+    slate_data = extract_csv_data()
+
+    return slate_data
+        
+
+def extract_slate_NBA(driver, source, slate):
+    """Extracts the slates list from sport.
+    """
+    wait = WebDriverWait(driver, 10)
+    actions = ActionChains(driver)
+
+    if source == 'FanDuel':
+        driver.get('https://www.fantasyalarm.com/nba/projections/daily'\
+            '/hitters/FD/{}'.format(slate))
+    if source == 'DraftKings':
+        driver.get('https://www.fantasyalarm.com/nba/projections/daily'\
+            '/hitters/DK/{}'.format(slate))
+    
+    try:
+        csv_button = wait.until(
+            EC.presence_of_element_located((By.XPATH, 
+            "//span[contains(text(), 'CSV')]/parent::a"))
+        )
+        actions.move_to_element(csv_button).click().perform()
+        time.sleep(3)
+    except NoSuchElementException:
+        print('Download button not found.')
+    except Exception as e:
+        print('Not downloaded due to:\n{}'.format(e))
+        
+    slate_data = extract_csv_data()
+
+    return slate_data
+
+
+def extract_slate_MLB(driver, source):
+    """Extracts the slates list from sport.
+    """
+    wait = WebDriverWait(driver, 10)
+    slates_data = dict()
+    current_url = ''
+    if source == 'FanDuel':
+        driver.get('https://www.fantasyalarm.com/mlb/projections/daily'\
+            '/hitters/FD/')
+        current_url = driver.current_url
+    if source == 'DraftKings':
+        driver.get('https://www.fantasyalarm.com/mlb/projections/daily'\
+            '/hitters/DK/')
+        current_url = driver.current_url
+    time.sleep(2)
+    slates = extract_slates_names(driver)
+
+    for slate in slates:
+        driver.get(current_url+slate)
         try:
             csv_button = wait.until(
                 EC.presence_of_element_located((By.XPATH, 
                 "//span[contains(text(), 'CSV')]/parent::a"))
             )
             ActionChains(driver).move_to_element(csv_button).click().perform()
-            time.sleep(2)
-        except NoSuchElementException:
-            print('Download button not found.')
-        except Exception as e:
-            print('Not downloaded due to:\n{}'.format(e))
-        
-        # Extracts data from file and deletes it
-        slate_data = extract_csv_data()
-        slates[slate.text.replace(' ', '')] = slate_data
-
-    return slates
-
-
-def extract_slate_MLB(driver, score):
-    """Extracts the slates list from sport.
-    """
-    wait = WebDriverWait(driver, 10)
-    actions = ActionChains(driver)
-    sport = driver.current_url
-
-    try:
-        projections_button = wait.until(
-            # EC.presence_of_element_located((By.ID, 
-            # "mobile-click-i-class-fa-fa-line-chart-aria-hidden-true-i-daily-projections"))
-            EC.presence_of_element_located((By.XPATH, 
-            '//a[contains(text(), "Daily Projections") and '\
-            '@id="mobile-click-i-class-fa-fa-line-chart-aria-hidden-true-i-daily-'\
-                'projections"]'))
-        )
-        actions.move_to_element(projections_button).click().perform()
-        time.sleep(7)
-    except NoSuchElementException:
-        print("Error clicking at projections.")
-    finally:
-        del(projections_button)
-        del(actions)
-
-    # slate_list = driver.find_element_by_xpath('//div[contains(text(), "Slates")]')
-    slate_list = wait.until(
-        EC.presence_of_element_located((By.XPATH, 
-        '//div[contains(text(), "Slates")]'))
-    )
-    
-    driver.execute_script('arguments[0].scrollIntoView();', driver.find_element_by_xpath(
-        '//a[@id="mobile-click-all-pos"]'
-    ))
-    slates = dict()
-
-    for slate in slate_list.find_elements_by_xpath(
-        './/parent::div//following-sibling::a'):
-        new_actions = ActionChains(driver)
-        new_actions.move_to_element(slate).click().perform()
-        time.sleep(3)
-    
-        # Clicks the score and download the file
-        driver.execute_script('arguments[0].scrollIntoView();', driver.find_element_by_xpath(
-            '//a[@id="mobile-click-all-pos"]'
-        ))
-        slate_button = wait.until(
-            EC.presence_of_element_located((By.XPATH,
-            '//a[contains(text(), "{}")]'.format(score)))
-        )
-        slate_button.click()
-        # actions.move_to_element(slate_button).click().perform()
-        time.sleep(1)
-        try:
-            csv_button = wait.until(
-                EC.presence_of_element_located((By.XPATH, 
-                "//span[contains(text(), 'CSV')]/parent::a"))
-            )
-            actions.move_to_element(csv_button).click().perform()
             time.sleep(3)
         except NoSuchElementException:
             print('Download button not found.')
         except Exception as e:
             print('Not downloaded due to:\n{}'.format(e))
         
-        # Extracts data from file and deletes it
         slate_data = extract_csv_data()
-        slates[slate.text.replace(' ', '')] = slate_data
+        slates_data[slate] = slate_data
 
-    return slates
+    return slates_data
 
 
-def extract_slate_PGA(driver, score, sport_url):
+def extract_slate_PGA(driver, source):
     """Extracts the slates list from sport.
     """
     wait = WebDriverWait(driver, 10)
-    driver.get(sport_url)
 
-    # try:
-    #     projections_button = wait.until(
-    #         EC.presence_of_element_located((By.ID, 
-    #         "mobile-click-i-class-fa-fa-line-chart-aria-hidden-true-i-projections"))
-    #     )
-    #     ActionChains(driver).move_to_element(projections_button).click().perform()
-    #     time.sleep(2)
-    # except NoSuchElementException:
-    #     print("Error clicking at projections.")
-
-    # # Clicks the score and download the file
-    # try:
-    #     slate_button = wait.until(
-    #         EC.presence_of_element_located((By.XPATH,
-    #         '//a[contains(text(), "{}")]'.format(score)))
-    #     )
-    #     ActionChains(driver).move_to_element(slate_button).click().perform()
-    #     time.sleep(5)
-    # except NoSuchElementException:
-    #     print('Score button not found.')
-    # except Exception as e:
-    #     print('Not clicked score button due to:\n{}'.format(e))
-    # finally:
-    #     del(slate_button)
-    if score == 'FanDuel':
+    if source == 'FanDuel':
         driver.get('https://www.fantasyalarm.com/pga/projections/daily/FD/')
     
-    if score == 'DraftKings':
+    if source == 'DraftKings':
         driver.get('https://www.fantasyalarm.com/pga/projections/daily/DK/')
 
     try:
@@ -271,6 +273,24 @@ def extract_slate_PGA(driver, score, sport_url):
     return slate_data
 
 
+def extract_slates_names(driver):
+    """Looks for the slate on the current sport and returns a list with their names.
+    """
+    names = list()
+
+    try:
+        slates_div = driver.find_element_by_xpath('//div[contains(text(), "Slates")]')
+    except NoSuchElementException:
+        print('Error locating slates div.')
+
+    try:
+        names = [name.text.strip(' \n').split(' ')[0] for name in slates_div\
+            .find_elements_by_xpath('./parent::div//following-sibling::a')]
+    except Exception as e:
+        print('Error extracting slates names: \n{}'.format(e))
+    return names
+
+
 def extract_csv_data():
     """Opens downloaded file, loads its content to Python object 
     and delete it.
@@ -278,7 +298,7 @@ def extract_csv_data():
     data = list()
     os.chdir(os.path.dirname(os.path.realpath(__file__)))
     for file in glob.glob("*.csv"):
-        with open(file, mode='r') as csv_file:
+        with open(file, mode='r', encoding='utf8') as csv_file:
             csv_reader = csv.DictReader(csv_file)
             for raw in csv_reader:
                 data.append(raw)
@@ -294,20 +314,13 @@ if __name__ == "__main__":
         help='Determines the sport to extract data from.')
     args = vars(parser.parse_args())
     
-    sports = {'MLB':'https://www.fantasyalarm.com/mlb/projections',
-              'NFL':'https://www.fantasyalarm.com/nfl/projections',
-              'NBA':'https://www.fantasyalarm.com/nba/projections',
-              'NHL':'https://www.fantasyalarm.com/nhl/projections',
-              'PGA':'https://www.fantasyalarm.com/pga/projections'}
-
     driver = get_geckodriver()
     driver.set_window_position(0, 0)
     driver.set_window_size(1920, 1080)
-    make_login_fantasy_sports(driver, sports[args['sport']])
-
 
     try:
-        extract_slate_sport(driver, sports[args['sport']])
+        open_fantasy_alarm(driver, args['sport'])
+        extract_slate_sport(driver, args['sport'], 'FanDuel')
     except Exception as e:
         print('Stopped due to: \n{}'.format(e))
     finally:

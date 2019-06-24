@@ -51,6 +51,10 @@ def get_geckodriver(use_proxy=False, user_agent=None, headless=False,
     """
     options = webdriver.FirefoxOptions()
     options.add_argument('-headless')
+    options.add_argument('--no-proxy-server')
+    options.add_argument("--proxy-server='direct://'");
+    options.add_argument("--proxy-bypass-list=*");
+
     profile = webdriver.FirefoxProfile()
     profile.set_preference('browser.download.panel.shown', False)
     profile.set_preference("browser.helperApps.neverAsk.openFile",
